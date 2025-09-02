@@ -308,3 +308,162 @@ scalar_t* cnnForward(CNN* cnn, Image* input_image) {
 
     return softmax_output; // Retorna as probabilidades finais
 }
+
+// Backpropagation para Softmax (combinado com Cross-Entropy Loss)
+// Retorna o gradiente da perda em relação às entradas da Softmax (logits)
+scalar_t* softmaxBackward(scalar_t *predictions, int true_label_idx, int num_classes) {
+    scalar_t *d_input = (scalar_t*)calloc(num_classes, sizeof(scalar_t));
+    if (!d_input) { fprintf(stderr, "Erro ao alocar d_input para softmaxBackward\n"); exit(1); }
+
+    for (int i = 0; i < num_classes; ++i) {
+        d_input[i] = predictions[i];
+        if (i == true_label_idx) {
+            d_input[i] -= 1.0; // Subtrai 1 para a classe verdadeira
+        }
+    }
+    return d_input;
+}
+
+// Backpropagation para Camada Totalmente Conectada (FC)
+// d_output: gradiente da perda em relação à saída da FC
+// input_vector: entrada da FC durante o forward pass
+// d_weights: ponteiro para onde armazenar os gradientes dos pesos
+// d_biases: ponteiro para onde armazenar os gradientes dos vieses
+// Retorna o gradiente da perda em relação à entrada da FC
+scalar_t* fcBackward(FCLayer *layer, scalar_t *d_output, scalar_t *input_vector, scalar_t *d_weights, scalar_t *d_biases) {
+    scalar_t *d_input = (scalar_t*)calloc(layer->input_size, sizeof(scalar_t));
+    if (!d_input) { fprintf(stderr, "Erro ao alocar d_input para fcBackward\n"); exit(1); }
+
+    // Calcular gradientes para os vieses (d_biases = d_output)
+    for (int j = 0; j < layer->output_size; ++j) {
+        d_biases[j] = d_output[j];
+    }
+
+    // Calcular gradientes para os pesos (d_weights = input_vector.T * d_output)
+    for (int i = 0; i < layer->input_size; ++i) {
+        for (int j = 0; j < layer->output_size; ++j) {
+            d_weights[i * layer->output_size + j] = input_vector[i] * d_output[j];
+        }
+    }
+
+    // Calcular gradientes para a entrada (d_input = d_output * weights.T)
+    for (int i = 0; i < layer->input_size; ++i) {
+        scalar_t sum = 0.0;
+        for (int j = 0; j < layer->output_size; ++j) {
+            sum += d_output[j] * layer->weights[i * layer->output_size + j]; // weights[input_idx][output_idx]
+        }
+        d_input[i] = sum;
+    }
+    return d_input;
+}
+
+// Backpropagation para ReLU
+// input: entrada da ReLU durante o forward pass
+// d_output: gradiente da perda em relação à saída da ReLU
+// Retorna o gradiente da perda em relação à entrada da ReLU
+Image* reluBackward(Image *input, Image *d_output) {
+    Image *d_input = createImage(input->depth, input->rows, input->cols);
+    for (int i = 0; i < input->depth * input->rows * input->cols; ++i) {
+        // Se a entrada original era positiva, o gradiente passa; caso contrário, é zero.
+        d_input->data[i] = (input->data[i] > 0) ? d_output->data[i] : 0.0;
+    }
+    return d_input;
+}
+
+// Backpropagation para Pooling (Max Pooling)
+// input: entrada do Pooling durante o forward pass
+// output: saída do Pooling durante o forward pass (para saber onde o max foi)
+// d_output: gradiente da perda em relação à saída do Pooling
+// Retorna o gradiente da perda em relação à entrada do Pooling
+Image* poolBackward(PoolLayer* layer, Image* input, Image* output, Image* d_output) {
+    Image* d_input = createImage(input->depth, input->rows, input->cols);
+
+    for (int d = 0; d < input->depth; ++d) { // Para cada canal
+        for (int r_out = 0; r_out < d_output->rows; ++r_out) { // Para cada linha na saída do gradiente
+            for (int c_out = 0; c_out < d_output->cols; ++c_out) { // Para cada coluna na saída do gradiente
+                scalar_t grad_val = getPixel(d_output, d, r_out, c_out);
+
+                // Encontrar a região correspondente na entrada original
+                int r_start = r_out * layer->stride;
+                int c_start = c_out * layer->stride;
+
+                // Encontrar a posição do valor máximo na janela de pooling original
+                scalar_t max_val = -INFINITY;
+                int max_r = -1, max_c = -1;
+
+                for (int pr = 0; pr < layer->pool_size; ++pr) {
+                    for (int pc = 0; pc < layer->pool_size; ++pc) {
+                        scalar_t pixel_val = getPixel(input, d, r_start + pr, c_start + pc);
+                        if (pixel_val > max_val) {
+                            max_val = pixel_val;
+                            max_r = r_start + pr;
+                            max_c = c_start + pc;
+                        }
+                    }
+                }
+                // O gradiente é passado apenas para a posição que continha o valor máximo
+                if (max_r != -1 && max_c != -1) {
+                    setPixel(d_input, d, max_r, max_c, getPixel(d_input, d, max_r, max_c) + grad_val);
+                }
+            }
+        }
+    }
+    return d_input;
+}
+
+// Backpropagation para Camada Convolucional
+// layer: camada convolucional
+// input: entrada da convolução durante o forward pass
+// d_output: gradiente da perda em relação à saída da convolução
+// d_filters: array para armazenar os gradientes dos filtros
+// d_biases: array para armazenar os gradientes dos vieses
+// Retorna o gradiente da perda em relação à entrada da convolução
+Image* convBackward(ConvLayer *layer, Image *input, Image *d_output, Image **d_filters, Image **d_biases) {
+    Image *d_input = createImage(input->depth, input->rows, input->cols);
+
+    // Inicializar gradientes de filtros e vieses
+    for (int f = 0; f < layer->num_filters; ++f) {
+        d_filters[f] = createImage(input->depth, layer->kernel_size, layer->kernel_size);
+        d_biases[f] = createImage(1, 1, 1);
+    }
+
+    for (int f = 0; f < layer->num_filters; ++f) { // Para cada filtro
+        // Gradiente do bias é a soma de todos os gradientes de saída para este filtro
+        scalar_t bias_grad_sum = 0.0;
+        for (int r_out = 0; r_out < d_output->rows; ++r_out) {
+            for (int c_out = 0; c_out < d_output->cols; ++c_out) {
+                bias_grad_sum += getPixel(d_output, f, r_out, c_out);
+            }
+        }
+        setPixel(d_biases[f], 0, 0, 0, bias_grad_sum);
+
+        // Calcular gradientes para os filtros e para a entrada
+        for (int r_out = 0; r_out < d_output->rows; ++r_out) {
+            for (int c_out = 0; c_out < d_output->cols; ++c_out) {
+                scalar_t d_out_val = getPixel(d_output, f, r_out, c_out);
+
+                // Calcular a posição inicial na entrada (com padding)
+                int r_start = r_out * layer->stride - layer->padding;
+                int c_start = c_out * layer->stride - layer->padding;
+
+                for (int d_in = 0; d_in < input->depth; ++d_in) { // Para cada canal de entrada
+                    for (int kr = 0; kr < layer->kernel_size; ++kr) { // Para cada linha do kernel
+                        for (int kc = 0; kc < layer->kernel_size; ++kc) { // Para cada coluna do kernel
+                            scalar_t input_val = getPixel(input, d_in, r_start + kr, c_start + kc);
+                            // Gradiente do filtro
+                            setPixel(d_filters[f], d_in, kr, kc, getPixel(d_filters[f], d_in, kr, kc) + input_val * d_out_val);
+
+                            // Gradiente da entrada (propagação para trás)
+                            if (r_start + kr >= 0 && r_start + kr < input->rows &&
+                                c_start + kc >= 0 && c_start + kc < input->cols) {
+                                scalar_t filter_val = getPixel(layer->filters[f], d_in, kr, kc);
+                                setPixel(d_input, d_in, r_start + kr, c_start + kc, getPixel(d_input, d_in, r_start + kr, c_start + kc) + filter_val * d_out_val);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return d_input;
+}

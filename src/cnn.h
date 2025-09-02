@@ -76,9 +76,19 @@ typedef struct {
 
 // Funções para inicializar e liberar a CNN
 CNN* createCNN(int input_depth, int input_rows, int input_cols, int num_classes);
-void freeCNN(CNN *cnn);
+void freeCNN(CNN* cnn);
 
 // Função de forward pass para a CNN completa
-scalar_t* cnnForward(CNN *cnn, Image *input_image);
+scalar_t* cnnForward(CNN* cnn, Image* input_image);
+
+// Função de perda
+scalar_t crossEntropyLoss(scalar_t *predictions, int true_label_idx, int num_classes);
+
+// Funções de backpropagation
+scalar_t* softmaxBackward(scalar_t *predictions, int true_label_idx, int num_classes);
+scalar_t* fcBackward(FCLayer *layer, scalar_t *d_output, scalar_t *input_vector, scalar_t *d_weights, scalar_t *d_biases);
+Image* reluBackward(Image* input, Image* d_output);
+Image* poolBackward(PoolLayer* layer, Image* input, Image* output, Image* d_output);
+Image* convBackward(ConvLayer* layer, Image* input, Image* d_output, Image** d_filters, Image** d_biases);
 
 #endif

@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <math.h>
 #include "cnn.h"
 
 // Função auxiliar para inicializar pesos aleatoriamente
@@ -76,3 +77,13 @@ int main() {
 
     return 0;
 }
+
+// Função de perda: Entropia Cruzada Categórica
+scalar_t crossEntropyLoss(scalar_t *predictions, int true_label_idx, int num_classes) {
+    // Para evitar log(0), que é indefinido, adicionamos um pequeno epsilon
+    scalar_t epsilon = 1e-9;
+    scalar_t true_prob = predictions[true_label_idx];
+    return -log(true_prob + epsilon);
+}
+
+
