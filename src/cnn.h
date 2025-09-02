@@ -91,4 +91,12 @@ Image* reluBackward(Image* input, Image* d_output);
 Image* poolBackward(PoolLayer* layer, Image* input, Image* output, Image* d_output);
 Image* convBackward(ConvLayer* layer, Image* input, Image* d_output, Image** d_filters, Image** d_biases);
 
+// Função de backpropagation para a CNN completa
+void cnnBackward(CNN* cnn, Image* input_image, scalar_t* predictions, int true_label_idx,
+                 Image** d_conv_filters, Image** d_conv_biases, scalar_t* d_fc_weights, scalar_t* d_fc_biases);
+
+// Função para atualizar os parâmetros da CNN usando SGD
+void updateParameters(CNN* cnn, Image** d_conv_filters, Image** d_conv_biases,
+                      scalar_t* d_fc_weights, scalar_t* d_fc_biases, scalar_t learning_rate);
+
 #endif

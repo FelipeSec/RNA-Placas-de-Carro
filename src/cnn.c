@@ -467,3 +467,104 @@ Image* convBackward(ConvLayer *layer, Image *input, Image *d_output, Image **d_f
     }
     return d_input;
 }
+
+// Função de backpropagation para a CNN completa
+void cnnBackward(CNN *cnn, Image *input_image, scalar_t *predictions, int true_label_idx,
+                 Image **d_conv_filters, Image **d_conv_biases, scalar_t *d_fc_weights, scalar_t *d_fc_biases) {
+
+    // --- Forward Pass (para armazenar valores intermediários necessários para o backward) ---
+    // 1. Camada Convolucional
+    Image *conv_output = convForward(cnn->conv_layer, input_image);
+
+    // 2. Camada ReLU
+    Image *relu_output = reluForward(conv_output);
+
+    // 3. Camada de Pooling
+    Image *pool_output = poolForward(cnn->pool_layer, relu_output);
+
+    // 4. Achatar a saída do Pooling
+    scalar_t *flattened_output = flattenImage(pool_output);
+
+    // 5. Camada Totalmente Conectada
+    scalar_t *fc_output = fcForward(cnn->fc_layer, flattened_output);
+
+    // --- Backward Pass (do final para o início) ---
+
+    // 1. Gradiente da Softmax/Cross-Entropy (d_loss/d_fc_output)
+    scalar_t *d_fc_output = softmaxBackward(predictions, true_label_idx, cnn->fc_layer->output_size);
+
+    // 2. Backprop da Camada FC
+    // d_flattened_output: gradiente da perda em relação à entrada da FC (saída achatada do pooling)
+    scalar_t *d_flattened_output = fcBackward(cnn->fc_layer, d_fc_output, flattened_output, d_fc_weights, d_fc_biases);
+    free(d_fc_output);
+
+    // 3. Desachatar o gradiente para a entrada do Pooling (d_pool_output)
+    // Precisamos converter d_flattened_output de volta para o formato Image
+    // Primeiro calcule as dimensões da saída da convolução (como no forward)
+    int conv_out_rows = (input_image->rows - cnn->conv_layer->kernel_size + 2 * cnn->conv_layer->padding) / cnn->conv_layer->stride + 1;
+    int conv_out_cols = (input_image->cols - cnn->conv_layer->kernel_size + 2 * cnn->conv_layer->padding) / cnn->conv_layer->stride + 1;
+    // Agora calcule as dimensões após o pooling
+    int pool_out_rows = (conv_out_rows - cnn->pool_layer->pool_size) / cnn->pool_layer->stride + 1;
+    int pool_out_cols = (conv_out_cols - cnn->pool_layer->pool_size) / cnn->pool_layer->stride + 1;
+
+    Image *d_pool_output = createImage(cnn->conv_layer->num_filters, // Profundidade é o número de filtros da conv
+                                       pool_out_rows, // Altura da saída do pooling
+                                       pool_out_cols); // Largura da saída do pooling
+
+    int total_elems = d_pool_output->depth * d_pool_output->rows * d_pool_output->cols;
+    for (int i = 0; i < total_elems; ++i) {
+        d_pool_output->data[i] = d_flattened_output[i];
+    }
+    free(d_flattened_output);
+
+    // 4. Backprop da Camada de Pooling
+    // d_relu_output: gradiente da perda em relação à entrada da ReLU
+    Image *d_relu_output = poolBackward(cnn->pool_layer, relu_output, pool_output, d_pool_output);
+    freeImage(d_pool_output);
+
+    // 5. Backprop da Camada ReLU
+    // d_conv_output: gradiente da perda em relação à entrada da Convolução
+    Image *d_conv_output = reluBackward(conv_output, d_relu_output);
+    freeImage(d_relu_output);
+
+    // 6. Backprop da Camada Convolucional
+    // d_input_image: gradiente da perda em relação à imagem de entrada (não precisamos disso para o treinamento, mas é bom para depuração)
+    Image *d_input_image = convBackward(cnn->conv_layer, input_image, d_conv_output, d_conv_filters, d_conv_biases);
+    freeImage(d_conv_output);
+    freeImage(d_input_image); // Liberar este gradiente, pois não será usado para atualização
+
+    // Liberar as saídas intermediárias do forward pass
+    freeImage(conv_output);
+    freeImage(relu_output);
+    freeImage(pool_output);
+    free(flattened_output);
+    free(fc_output);
+}
+
+// Função para atualizar os parâmetros da CNN usando SGD
+void updateParameters(CNN *cnn, Image **d_conv_filters, Image **d_conv_biases,
+                      scalar_t *d_fc_weights, scalar_t *d_fc_biases, scalar_t learning_rate) {
+    // Atualizar pesos e vieses da camada convolucional
+    for (int f = 0; f < cnn->conv_layer->num_filters; ++f) {
+        for (int d = 0; d < cnn->conv_layer->filters[f]->depth; ++d) {
+            for (int r = 0; r < cnn->conv_layer->filters[f]->rows; ++r) {
+                for (int c = 0; c < cnn->conv_layer->filters[f]->cols; ++c) {
+                    scalar_t current_weight = getPixel(cnn->conv_layer->filters[f], d, r, c);
+                    scalar_t grad_weight = getPixel(d_conv_filters[f], d, r, c);
+                    setPixel(cnn->conv_layer->filters[f], d, r, c, current_weight - learning_rate * grad_weight);
+                }
+            }
+        }
+        scalar_t current_bias = getPixel(cnn->conv_layer->biases[f], 0, 0, 0);
+        scalar_t grad_bias = getPixel(d_conv_biases[f], 0, 0, 0);
+        setPixel(cnn->conv_layer->biases[f], 0, 0, 0, current_bias - learning_rate * grad_bias);
+    }
+
+    // Atualizar pesos e vieses da camada FC
+    for (int i = 0; i < cnn->fc_layer->input_size * cnn->fc_layer->output_size; ++i) {
+        cnn->fc_layer->weights[i] -= learning_rate * d_fc_weights[i];
+    }
+    for (int i = 0; i < cnn->fc_layer->output_size; ++i) {
+        cnn->fc_layer->biases[i] -= learning_rate * d_fc_biases[i];
+    }
+}
