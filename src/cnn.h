@@ -66,4 +66,19 @@ scalar_t* softmaxForward(scalar_t *input_vector, int size);
 // Função para "achatar" uma Image em um vetor 1D
 scalar_t* flattenImage(Image *img);
 
+// Estrutura para a Rede Neural Convolucional completa
+typedef struct {
+    ConvLayer *conv_layer;
+    PoolLayer *pool_layer;
+    FCLayer *fc_layer;
+    // Adicione mais camadas conforme sua arquitetura
+} CNN;
+
+// Funções para inicializar e liberar a CNN
+CNN* createCNN(int input_depth, int input_rows, int input_cols, int num_classes);
+void freeCNN(CNN *cnn);
+
+// Função de forward pass para a CNN completa
+scalar_t* cnnForward(CNN *cnn, Image *input_image);
+
 #endif

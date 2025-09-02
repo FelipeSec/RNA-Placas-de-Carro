@@ -239,3 +239,72 @@ scalar_t* softmaxForward(scalar_t *input_vector, int size) {
     }
     return output_vector;
 }
+// Funções para inicializar e liberar a CNN
+CNN* createCNN(int input_depth, int input_rows, int input_cols, int num_classes) {
+    CNN *cnn = (CNN*)malloc(sizeof(CNN));
+    if (!cnn) { fprintf(stderr, "Erro ao alocar CNN\n"); exit(1); }
+
+    // Parâmetros para a primeira camada convolucional
+    int conv_num_filters = 8; // Exemplo: 8 filtros
+    int conv_kernel_size = 3; // Exemplo: kernel 3x3
+    int conv_stride = 1;
+    int conv_padding = 0;
+    cnn->conv_layer = createConvLayer(conv_num_filters, conv_kernel_size, conv_stride, conv_padding, input_depth);
+
+    // Calcular dimensões de saída da camada convolucional
+    int conv_output_rows = (input_rows - conv_kernel_size + 2 * conv_padding) / conv_stride + 1;
+    int conv_output_cols = (input_cols - conv_kernel_size + 2 * conv_padding) / conv_stride + 1;
+
+    // Parâmetros para a camada de pooling
+    int pool_size = 2; // Exemplo: pool 2x2
+    int pool_stride = 2;
+    cnn->pool_layer = createPoolLayer(pool_size, pool_stride);
+
+    // Calcular dimensões de saída da camada de pooling
+    int pool_output_rows = (conv_output_rows - pool_size) / pool_stride + 1;
+    int pool_output_cols = (conv_output_cols - pool_size) / pool_stride + 1;
+
+    // Parâmetros para a camada totalmente conectada
+    // A entrada da FC é o tamanho achatado da saída do pooling
+    int fc_input_size = conv_num_filters * pool_output_rows * pool_output_cols;
+    cnn->fc_layer = createFCLayer(fc_input_size, num_classes);
+
+    return cnn;
+}
+
+void freeCNN(CNN* cnn) {
+    if (cnn) {
+        freeConvLayer(cnn->conv_layer);
+        freePoolLayer(cnn->pool_layer);
+        freeFCLayer(cnn->fc_layer);
+        free(cnn);
+    }
+}
+
+// Função de forward pass para a CNN completa
+scalar_t* cnnForward(CNN* cnn, Image* input_image) {
+    // 1. Camada Convolucional
+    Image* conv_output = convForward(cnn->conv_layer, input_image);
+
+    // 2. Camada ReLU (aplicada após a convolução)
+    Image* relu_output = reluForward(conv_output);
+    freeImage(conv_output); // Liberar memória intermediária
+
+    // 3. Camada de Pooling
+    Image* pool_output = poolForward(cnn->pool_layer, relu_output);
+    freeImage(relu_output); // Liberar memória intermediária
+
+    // 4. Achatar a saída do Pooling para a camada FC
+    scalar_t* flattened_output = flattenImage(pool_output);
+    freeImage(pool_output); // Liberar memória intermediária
+
+    // 5. Camada Totalmente Conectada
+    scalar_t* fc_output = fcForward(cnn->fc_layer, flattened_output);
+    free(flattened_output); // Liberar memória intermediária
+
+    // 6. Camada Softmax (para obter probabilidades de saída)
+    scalar_t* softmax_output = softmaxForward(fc_output, cnn->fc_layer->output_size);
+    free(fc_output); // Liberar memória intermediária
+
+    return softmax_output; // Retorna as probabilidades finais
+}
